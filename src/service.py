@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from .audit import AuditTrail
 from .domain import ConflictError, NotFoundError, PermissionDenied, ValidationError
+from .ledger import LedgerService
 from .rules import RuleEngine
 
 
@@ -11,6 +12,7 @@ class DomainService:
         self.repository = repository
         self.rules = rules or RuleEngine()
         self.audit = AuditTrail(repository)
+        self.ledger = LedgerService(repository)
 
     def _lookup(self, kind, field, value):
         return self.repository.find_entities(self.rules.normalize_kind(kind), field, value)
@@ -36,6 +38,7 @@ class DomainService:
         self.audit.record(entity_id, actor, "create", None, status, {"kind": kind})
         if idempotency_key:
             self.repository.save_idempotency(actor.user_id, idempotency_key, entity_id)
+        self.ledger.record_live_event(entity, "create", actor)
         return entity
 
     def transition(self, actor, entity_id, action, data=None, expected_version=None):
@@ -57,6 +60,7 @@ class DomainService:
             updated["status"],
             {"patch": patch},
         )
+        self.ledger.record_live_event(updated, action, actor)
         return updated
 
     def merge_offline(self, actor, records):
@@ -95,6 +99,30 @@ class DomainService:
         if not entity:
             raise NotFoundError("entity not found: " + entity_id)
         return entity
+
+    def submit_backfill(self, actor, payload):
+        return self.ledger.submit_batch(actor, payload)
+
+    def retry_backfill(self, actor, batch_id):
+        return self.ledger.retry_batch(actor, batch_id)
+
+    def backfill_batches(self):
+        return self.ledger.list_batches()
+
+    def backfill_batch(self, batch_id):
+        return self.ledger.get_batch(batch_id)
+
+    def ledger_events(self, equipment_id=None, kind=None):
+        return self.ledger.list_events(equipment_id=equipment_id, kind=kind)
+
+    def ledger_replay(self, equipment_id, as_of=None):
+        return self.ledger.replay(equipment_id, as_of=as_of)
+
+    def ledger_conclusions(self, equipment_id=None):
+        return self.ledger.list_conclusions(equipment_id=equipment_id)
+
+    def ledger_reviews(self):
+        return self.ledger.list_reviews()
 
     def list(self, kind=None, status=None):
         if kind:

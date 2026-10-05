@@ -84,6 +84,44 @@ def create_handler(service, rules, static_dir):
                         return self._send_html(200, handle.read())
                 if parts == ["api", "audit"]:
                     return self._send(200, {"items": service.audit_log()})
+                if parts == ["api", "backfill-batches"]:
+                    return self._send(200, {"items": service.backfill_batches()})
+                if len(parts) == 3 and parts[:2] == ["api", "backfill-batches"]:
+                    return self._send(200, service.backfill_batch(parts[2]))
+                if parts == ["api", "ledger", "events"]:
+                    query = parse_qs(parsed.query)
+                    return self._send(
+                        200,
+                        {
+                            "items": service.ledger_events(
+                                equipment_id=query.get("equipment_id", [None])[0],
+                                kind=query.get("kind", [None])[0],
+                            )
+                        },
+                    )
+                if parts == ["api", "ledger", "replay"]:
+                    query = parse_qs(parsed.query)
+                    equipment_id = query.get("equipment_id", [None])[0]
+                    if not equipment_id:
+                        raise ValidationError("equipment_id is required")
+                    return self._send(
+                        200,
+                        service.ledger_replay(
+                            equipment_id, as_of=query.get("as_of", [None])[0]
+                        ),
+                    )
+                if parts == ["api", "ledger", "conclusions"]:
+                    query = parse_qs(parsed.query)
+                    return self._send(
+                        200,
+                        {
+                            "items": service.ledger_conclusions(
+                                equipment_id=query.get("equipment_id", [None])[0]
+                            )
+                        },
+                    )
+                if parts == ["api", "ledger", "reviews"]:
+                    return self._send(200, {"items": service.ledger_reviews()})
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     return self._send(200, service.get(parts[2]))
                 if len(parts) >= 2 and parts[0] == "api" and parts[1] != "entities":
@@ -104,6 +142,10 @@ def create_handler(service, rules, static_dir):
                 if parts == ["api", "offline-records"]:
                     body = self._body()
                     return self._send(200, {"items": service.merge_offline(actor, body.get("records", []))})
+                if parts == ["api", "backfill-batches"]:
+                    return self._send(200, service.submit_backfill(actor, self._body()))
+                if len(parts) == 4 and parts[:2] == ["api", "backfill-batches"] and parts[3] == "replay":
+                    return self._send(200, service.retry_backfill(actor, parts[2]))
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     body = self._body()
                     action = body.pop("action", None)
