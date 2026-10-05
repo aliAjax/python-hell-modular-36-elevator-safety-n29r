@@ -244,6 +244,19 @@ class RuleEngine:
     def normalize_kind(self, kind):
         return self.ALIASES.get(kind, kind)
 
+    def known_statuses(self, kind):
+        """All statuses a kind may hold (initial plus every transition target)."""
+        kind = self.normalize_kind(kind)
+        if kind not in self.INITIAL_STATUS:
+            raise ValidationError("unknown kind: " + str(kind))
+        statuses = {self.INITIAL_STATUS[kind]}
+        for entity_kind, transitions in self.TRANSITIONS.items():
+            if entity_kind != kind:
+                continue
+            for _action, (_allowed, next_status) in transitions.items():
+                statuses.add(next_status)
+        return statuses
+
     def initial_status(self, kind, data=None):
         kind = self.normalize_kind(kind)
         if kind not in self.INITIAL_STATUS:

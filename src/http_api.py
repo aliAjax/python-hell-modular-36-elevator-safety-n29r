@@ -84,6 +84,10 @@ def create_handler(service, rules, static_dir):
                         return self._send_html(200, handle.read())
                 if parts == ["api", "audit"]:
                     return self._send(200, {"items": service.audit_log()})
+                if parts == ["api", "backfill"]:
+                    return self._send(200, {"items": service.backfill.list()})
+                if len(parts) == 3 and parts[:2] == ["api", "backfill"]:
+                    return self._send(200, service.backfill.get(parts[2]))
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     return self._send(200, service.get(parts[2]))
                 if len(parts) >= 2 and parts[0] == "api" and parts[1] != "entities":
@@ -103,7 +107,25 @@ def create_handler(service, rules, static_dir):
                 actor = self._actor()
                 if parts == ["api", "offline-records"]:
                     body = self._body()
-                    return self._send(200, {"items": service.merge_offline(actor, body.get("records", []))})
+                    report = service.merge_offline(
+                        actor,
+                        body.get("records", []),
+                        batch_id=body.get("batch_id"),
+                        source_id=body.get("source_id"),
+                    )
+                    return self._send(200 if report["status"] == "committed" else 409, report)
+                if parts == ["api", "backfill"]:
+                    body = self._body()
+                    report = service.merge_offline(
+                        actor,
+                        body.get("records", []),
+                        batch_id=body.get("batch_id"),
+                        source_id=body.get("source_id"),
+                    )
+                    return self._send(200 if report["status"] == "committed" else 409, report)
+                if len(parts) == 4 and parts[:2] == ["api", "backfill"] and parts[3] == "retry":
+                    report = service.retry_backfill(actor, parts[2])
+                    return self._send(200 if report["status"] == "committed" else 409, report)
                 if len(parts) == 3 and parts[:2] == ["api", "entities"]:
                     body = self._body()
                     action = body.pop("action", None)

@@ -1,8 +1,8 @@
-import hashlib
 from uuid import uuid4
 
 from .audit import AuditTrail
-from .domain import ConflictError, NotFoundError, PermissionDenied, ValidationError
+from .backfill import BackfillService
+from .domain import ConflictError, NotFoundError
 from .rules import RuleEngine
 
 
@@ -11,6 +11,7 @@ class DomainService:
         self.repository = repository
         self.rules = rules or RuleEngine()
         self.audit = AuditTrail(repository)
+        self.backfill = BackfillService(repository, self.rules, self.audit)
 
     def _lookup(self, kind, field, value):
         return self.repository.find_entities(self.rules.normalize_kind(kind), field, value)
@@ -59,36 +60,13 @@ class DomainService:
         )
         return updated
 
-    def merge_offline(self, actor, records):
-        """Merge field records by a stable (source_id, record_id) identity."""
-        if not isinstance(records, list):
-            raise ValidationError("records must be a list")
-        created = []
-        for raw in records:
-            if not isinstance(raw, dict):
-                raise ValidationError("each offline record must be an object")
-            source_id = str(raw.get("source_id", "")).strip()
-            record_id = str(raw.get("record_id", "")).strip()
-            if not source_id or not record_id:
-                raise ValidationError("source_id and record_id are required")
-            digest = hashlib.sha256((source_id + "\0" + record_id).encode("utf-8")).hexdigest()[:32]
-            entity_id = "offline-" + digest
-            existing = self.repository.get_entity(entity_id)
-            if existing:
-                created.append(existing)
-                continue
-            payload = dict(raw)
-            self.rules.validate_create(actor, "offline_record", payload, self._lookup)
-            entity = self.repository.create_entity(
-                entity_id,
-                "offline_record",
-                self.rules.initial_status("offline_record", payload),
-                payload,
-                actor.user_id,
-            )
-            self.audit.record(entity_id, actor, "merge_offline", None, entity["status"], {"source_id": source_id, "record_id": record_id})
-            created.append(entity)
-        return created
+    def merge_offline(self, actor, records, batch_id=None, source_id=None):
+        """Replay offline records as a batch; see BackfillService.submit."""
+        return self.backfill.submit(actor, records, batch_id=batch_id, source_id=source_id)
+
+    def retry_backfill(self, actor, batch_id):
+        """Retry a failed backfill batch using its original records."""
+        return self.backfill.retry(actor, batch_id)
 
     def get(self, entity_id):
         entity = self.repository.get_entity(entity_id)
